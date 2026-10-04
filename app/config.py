@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,3 +11,12 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     llm_timeout_seconds: float = Field(default=15, gt=0, le=120)
+    llm_provider: Literal["mock", "gemini"] = "mock"
+    gemini_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
+    gemini_model: str = Field(default="gemini-2.5-flash", min_length=1)
+    llm_max_output_tokens: int = Field(default=1024, gt=0, le=8192)
+    # Stream message replies to clients as Server-Sent Events instead of one JSON body.
+    stream_responses: bool = False
