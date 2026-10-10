@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn>=0.30,<1",
     "pydantic-settings>=2.6,<3",
     "structlog>=24,<27",
+    "langfuse>=4.16.0",
 ]
 
 [dependency-groups]

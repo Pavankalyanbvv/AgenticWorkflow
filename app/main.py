@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from time import perf_counter
@@ -13,6 +14,7 @@ from app.api import health, messages
 from app.config import Settings
 from app.providers.factory import create_llm_provider
 from app.providers.llm import LLMProvider, ProviderError
+from app.providers.tracing import TracedProvider, create_langfuse
 from app.services.agent import AgentService
 
 
@@ -38,14 +40,22 @@ def create_app(settings: Settings | None = None, provider: LLMProvider | None = 
     if provider is None:
         provider = create_llm_provider(settings)
         managed_provider = provider
+    langfuse = create_langfuse(settings)
+    if langfuse is not None:
+        provider = TracedProvider(provider, langfuse, settings.langfuse_capture_content)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
             yield
         finally:
-            if managed_provider is not None:
-                await managed_provider.aclose()
+            try:
+                if managed_provider is not None:
+                    await managed_provider.aclose()
+            finally:
+                if langfuse is not None:
+                    # Flush buffered spans without blocking the event loop.
+                    await asyncio.to_thread(langfuse.shutdown)
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
     app.state.agent = AgentService(provider, settings.llm_timeout_seconds)

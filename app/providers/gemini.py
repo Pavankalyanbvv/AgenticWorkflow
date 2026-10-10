@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from time import perf_counter
 
@@ -10,6 +11,12 @@ from app.providers.llm import Generation, ProviderError, StreamEvent
 from app.schemas import TokenUsage
 
 logger = structlog.get_logger(__name__)
+
+# The SDK logs raw upstream error messages before each retry; keep only warnings.
+logging.getLogger("google_genai").setLevel(logging.WARNING)
+
+# Transient overloads (429/5xx) are common; the agent timeout still bounds the total.
+RETRY_OPTIONS = types.HttpRetryOptions(attempts=3, initial_delay=1.0, max_delay=4.0)
 
 SAFE_ERROR_REASONS = {
     "API_KEY_INVALID",
@@ -92,7 +99,7 @@ class GeminiProvider:
             vertexai=False,
             http_options=types.HttpOptions(
                 timeout=int(timeout_seconds * 1000),
-                retry_options=types.HttpRetryOptions(attempts=1),
+                retry_options=RETRY_OPTIONS,
             ),
         )
 

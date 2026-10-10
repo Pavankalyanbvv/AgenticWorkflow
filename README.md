@@ -4,7 +4,7 @@ A personal project for a team of two to three engineers, built one layer at a
 time toward production readiness. The selected architecture uses FastAPI,
 LangGraph, Langfuse Cloud and PostgreSQL.
 
-## Implemented foundation and Gemini model access
+## Implemented foundation, Gemini model access and Langfuse tracing
 
 `HTTP request → validation → agent service → Gemini or mock provider → typed response`
 
@@ -25,6 +25,8 @@ LangGraph, Langfuse Cloud and PostgreSQL.
   prompts, responses or credentials.
 - Optional response streaming: with `STREAM_RESPONSES=true`, `POST /api/v1/messages`
   returns Server-Sent Events from Gemini's streaming API instead of one JSON body.
+- Optional Langfuse Cloud tracing: one generation per model call with model, usage,
+  cost and latency; prompt and reply capture is off by default.
 
 Responses identify the provider and model, and include provider-reported input
 and output token counts when available. Output tokens represent generated answer
@@ -58,7 +60,8 @@ prefer `GEMINI_API_KEY`. Missing credentials in Gemini mode fail at startup.
 
 `LLM_TIMEOUT_SECONDS` bounds the request (30 seconds in the example), and
 `LLM_MAX_OUTPUT_TOKENS` bounds generated output (1,024 by default, including
-Gemini's thinking budget). SDK retries are limited to one attempt for now.
+Gemini's thinking budget). The SDK makes up to three attempts on 408, 429 and 5xx
+responses with short backoff; `LLM_TIMEOUT_SECONDS` still bounds the total time.
 Blocked or empty text responses and upstream errors produce a sanitized 502;
 timeouts produce a 504. Model calls use your key's quota and applicable billing.
 
@@ -71,6 +74,21 @@ key: replace `GEMINI_API_KEY` in `.env` with a valid Gemini Developer API key fr
 Google AI Studio and restart the server. If you export `GEMINI_API_KEY` in your
 shell, that value overrides `.env`; update or unset it as well. Automatic SDK
 function calling is disabled for this text-only layer.
+
+### Langfuse tracing
+
+Create a project in [Langfuse Cloud](https://cloud.langfuse.com) and set
+`LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env`. Tracing is enabled only
+when both are present, so tests and offline mock mode need no Langfuse account.
+`LANGFUSE_BASE_URL` defaults to the EU cloud; use your region's URL if different.
+
+Each model call becomes one Langfuse generation (`llm.generate` or `llm.stream`)
+with the model, token usage, latency, Langfuse-calculated cost, time to first
+token for streams, the `request_id` in metadata and an `ERROR` level with only the
+exception type on failure. Application logs for the request include its
+`trace_id`. Prompts and replies are not sent unless
+`LANGFUSE_CAPTURE_CONTENT=true`; enable that only where storing message content in
+Langfuse is acceptable. Spans are flushed at application shutdown.
 
 ### Streaming responses
 
@@ -126,10 +144,9 @@ records implementation status; the design document describes the target system.
 
 ## Next layers
 
-1. Add Langfuse generation tracing to the implemented Gemini client.
-2. Add a minimal LangGraph workflow and parent/child traces.
-3. Add PostgreSQL application tables, migrations and persistent graph checkpoints.
-4. Add one read-only MCP tool, then permission checks and action approvals.
-5. Add durable workers, evaluation gates and Grafana monitoring as workflows grow.
+1. Add a minimal LangGraph workflow and parent/child traces.
+2. Add PostgreSQL application tables, migrations and persistent graph checkpoints.
+3. Add one read-only MCP tool, then permission checks and action approvals.
+4. Add durable workers, evaluation gates and Grafana monitoring as workflows grow.
 
-LangGraph, Langfuse, PostgreSQL and Grafana are planned but not connected yet.
+LangGraph, PostgreSQL and Grafana are planned but not connected yet.
