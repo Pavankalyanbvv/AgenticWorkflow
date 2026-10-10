@@ -5,13 +5,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.db.persistence import MemoryPersistence
 from app.main import create_app
 from app.providers.llm import Generation, ProviderError
 
 
 @pytest.fixture
 def client():
-    with TestClient(create_app(Settings(_env_file=None))) as client:
+    app = create_app(Settings(_env_file=None), persistence=MemoryPersistence())
+    with TestClient(app) as client:
         yield client
 
 
@@ -77,7 +79,7 @@ class UnexpectedFailureProvider:
 )
 def test_failures_are_sanitized(provider, status, code):
     settings = Settings(_env_file=None, llm_timeout_seconds=0.01)
-    with TestClient(create_app(settings, provider)) as client:
+    with TestClient(create_app(settings, provider, persistence=MemoryPersistence())) as client:
         response = client.post("/api/v1/messages", json={"message": "hello"})
     assert response.status_code == status
     assert response.json()["error"]["code"] == code

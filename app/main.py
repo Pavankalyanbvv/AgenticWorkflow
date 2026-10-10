@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from time import perf_counter
@@ -10,11 +9,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
+from app.agent.factory import create_workflow
 from app.api import health, messages
 from app.config import Settings
+from app.db.persistence import Persistence, PostgresPersistence
+from app.db.store import ConversationNotFoundError
+from app.observability import create_tracer
 from app.providers.factory import create_llm_provider
 from app.providers.llm import LLMProvider, ProviderError
-from app.providers.tracing import TracedProvider, create_langfuse
+from app.providers.tracing import TracedProvider
 from app.services.agent import AgentService
 
 
@@ -33,32 +36,53 @@ def configure_logging(level: str) -> None:
     )
 
 
-def create_app(settings: Settings | None = None, provider: LLMProvider | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    provider: LLMProvider | None = None,
+    persistence: Persistence | None = None,
+) -> FastAPI:
+    """Build the app. Callers own injected providers and persistence (e.g. in tests)."""
     settings = settings or Settings()
     configure_logging(settings.log_level)
+    managed_persistence = None
+    if persistence is None:
+        if not settings.database_url or not settings.database_url.get_secret_value().strip():
+            raise ValueError("Set DATABASE_URL in .env before starting the server.")
+        persistence = PostgresPersistence(
+            settings.database_url.get_secret_value().strip(), settings.db_pool_size
+        )
+        managed_persistence = persistence
     managed_provider = None
     if provider is None:
         provider = create_llm_provider(settings)
         managed_provider = provider
-    langfuse = create_langfuse(settings)
-    if langfuse is not None:
-        provider = TracedProvider(provider, langfuse, settings.langfuse_capture_content)
+    tracer = create_tracer(settings)
+    traced_provider = TracedProvider(provider, tracer)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if managed_persistence is not None:
+            await managed_persistence.open()
         try:
+            # Built here because the checkpointer exists only once persistence is open.
+            workflow = create_workflow(traced_provider, persistence.checkpointer)
+            app.state.agent = AgentService(
+                workflow, tracer, persistence.store, settings.llm_timeout_seconds
+            )
             yield
         finally:
             try:
                 if managed_provider is not None:
                     await managed_provider.aclose()
             finally:
-                if langfuse is not None:
-                    # Flush buffered spans without blocking the event loop.
-                    await asyncio.to_thread(langfuse.shutdown)
+                try:
+                    await tracer.shutdown()
+                finally:
+                    if managed_persistence is not None:
+                        await managed_persistence.close()
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
-    app.state.agent = AgentService(provider, settings.llm_timeout_seconds)
+    app.state.persistence = persistence
     app.state.stream_responses = settings.stream_responses
     logger = structlog.get_logger(__name__)
 
@@ -74,6 +98,12 @@ def create_app(settings: Settings | None = None, provider: LLMProvider | None = 
     async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         # Do not expose rejected input or echo request bodies in errors.
         return error(request, 422, "invalid_request", "Request body is invalid.")
+
+    @app.exception_handler(ConversationNotFoundError)
+    async def conversation_not_found(
+        request: Request, exc: ConversationNotFoundError
+    ) -> JSONResponse:
+        return error(request, 404, "conversation_not_found", "The conversation does not exist.")
 
     @app.exception_handler(ProviderError)
     async def provider_error(request: Request, exc: ProviderError) -> JSONResponse:
@@ -113,6 +143,3 @@ def create_app(settings: Settings | None = None, provider: LLMProvider | None = 
     app.include_router(health.router)
     app.include_router(messages.router)
     return app
-
-
-app = create_app()

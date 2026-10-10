@@ -22,6 +22,7 @@ def get_agent(request: Request) -> AgentService:
             "description": "JSON reply, or Server-Sent Events when STREAM_RESPONSES=true.",
             "content": {"text/event-stream": {}},
         },
+        404: {"model": ErrorResponse},
         422: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         504: {"model": ErrorResponse},
@@ -34,6 +35,11 @@ async def create_message(
     agent: Annotated[AgentService, Depends(get_agent)],
 ) -> MessageResponse | StreamingResponse:
     if request.app.state.stream_responses:
-        return await sse_response(agent.stream(payload.message), request.state.request_id)
-    result = await agent.respond(payload.message)
-    return MessageResponse(request_id=request.state.request_id, **result.__dict__)
+        events = agent.stream(payload.message, payload.conversation_id)
+        return await sse_response(events, request.state.request_id)
+    reply = await agent.respond(payload.message, payload.conversation_id)
+    return MessageResponse(
+        request_id=request.state.request_id,
+        conversation_id=reply.conversation_id,
+        **reply.generation.__dict__,
+    )

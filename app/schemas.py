@@ -7,6 +7,8 @@ class MessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     message: str = Field(min_length=1, max_length=4000)
+    # Omit to start a new conversation; only server-issued IDs can be continued.
+    conversation_id: UUID | None = None
 
 
 class TokenUsage(BaseModel):
@@ -17,6 +19,7 @@ class TokenUsage(BaseModel):
 
 class MessageResponse(BaseModel):
     request_id: UUID
+    conversation_id: UUID
     reply: str
     provider: str
     model: str

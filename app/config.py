@@ -16,7 +16,7 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )
-    gemini_model: str = Field(default="gemini-2.5-flash", min_length=1)
+    gemini_model: str = Field(default="gemini-3.5-flash", min_length=1)
     llm_max_output_tokens: int = Field(default=1024, gt=0, le=8192)
     # Stream message replies to clients as Server-Sent Events instead of one JSON body.
     stream_responses: bool = False
@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     )
     # Prompts and replies are sent to Langfuse only when explicitly enabled.
     langfuse_capture_content: bool = False
+    # PostgreSQL connection (Neon direct endpoint); required to run the server.
+    database_url: SecretStr | None = None
+    db_pool_size: int = Field(default=5, gt=0, le=20)
 
     @property
     def langfuse_enabled(self) -> bool:

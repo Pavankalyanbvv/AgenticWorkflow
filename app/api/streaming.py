@@ -3,23 +3,26 @@ from collections.abc import AsyncGenerator
 
 from fastapi.responses import StreamingResponse
 
-from app.providers.llm import Generation, ProviderError, StreamEvent
+from app.providers.llm import ProviderError
+from app.services.agent import AgentReply, AgentStreamEvent
 
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _encode(item: StreamEvent, request_id: str) -> str:
-    if isinstance(item, Generation):
+def _encode(item: AgentStreamEvent, request_id: str) -> str:
+    if isinstance(item, AgentReply):
         # The full reply was already sent as deltas; the done event carries metadata only.
+        generation = item.generation
         return _sse(
             "done",
             {
                 "request_id": request_id,
-                "provider": item.provider,
-                "model": item.model,
-                "usage": item.usage.model_dump(),
+                "conversation_id": str(item.conversation_id),
+                "provider": generation.provider,
+                "model": generation.model,
+                "usage": generation.usage.model_dump(),
             },
         )
     return _sse("delta", {"text": item})
@@ -30,7 +33,7 @@ def _error(request_id: str, code: str, message: str) -> str:
 
 
 async def sse_response(
-    events: AsyncGenerator[StreamEvent, None], request_id: str
+    events: AsyncGenerator[AgentStreamEvent, None], request_id: str
 ) -> StreamingResponse:
     """Stream deltas, then a done event; failures after headers become an error event."""
     # Pull the first event before sending headers so early upstream failures keep their
